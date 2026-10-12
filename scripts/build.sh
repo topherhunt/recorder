@@ -8,10 +8,14 @@
 #
 # Environment:
 #   REC_SIGN_IDENTITY  certificate common name, or "-" to force ad-hoc signing
+#   REC_VERSION        version string for Info.plist (default 0.0.0-dev)
+#   REC_APP_DIR        where to put the .app (default build)
+#   REC_UNIVERSAL=1    build arm64 + x86_64 instead of only this machine's arch
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="build/Recorder.app"
+APP="${REC_APP_DIR:-build}/Recorder.app"
+VERSION="${REC_VERSION:-0.0.0-dev}"
 CERT="${REC_SIGN_IDENTITY:-Activity Monitor Dev}"
 
 if [ "$CERT" = "-" ]; then
@@ -27,13 +31,26 @@ else
   fi
 fi
 
-echo "==> swift build"
-swift build -c release
+if [ "${REC_UNIVERSAL:-0}" = "1" ]; then
+  # Two passes and a lipo: `swift build --arch a --arch b` needs Xcode's xcbuild, which the Command Line Tools lack.
+  echo "==> swift build (arm64 + x86_64)"
+  swift build -c release --triple arm64-apple-macosx15.0 --scratch-path .build/arm64
+  swift build -c release --triple x86_64-apple-macosx15.0 --scratch-path .build/x86
+  mkdir -p .build/universal
+  lipo -create -output .build/universal/Recorder \
+    .build/arm64/arm64-apple-macosx/release/Recorder \
+    .build/x86/x86_64-apple-macosx/release/Recorder
+  BIN=".build/universal/Recorder"
+else
+  echo "==> swift build"
+  swift build -c release
+  BIN=".build/release/Recorder"
+fi
 
-echo "==> assembling $APP"
+echo "==> assembling $APP (version $VERSION)"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
-cp .build/release/Recorder "$APP/Contents/MacOS/Recorder"
+cp "$BIN" "$APP/Contents/MacOS/Recorder"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -44,8 +61,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key>        <string>Recorder</string>
   <key>CFBundleIdentifier</key>        <string>com.topherhunt.recorder</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
-  <key>CFBundleVersion</key>           <string>1</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key>           <string>$VERSION</string>
   <key>LSMinimumSystemVersion</key>    <string>15.0</string>
   <key>LSUIElement</key>               <true/>
   <key>NSMicrophoneUsageDescription</key>

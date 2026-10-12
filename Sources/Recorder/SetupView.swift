@@ -6,6 +6,8 @@ import ScreenCaptureKit
 struct SetupView: View {
     @ObservedObject var catalog: SourceCatalog
     let selectRegion: (CGDirectDisplayID, @escaping (CGRect?) -> Void) -> Void
+    /// Reports the region to outline on screen; nil when no region applies.
+    let previewRegion: (CGDirectDisplayID, CGRect?) -> Void
     let onRecord: (CaptureTarget, RecordingOptions, URL) -> Void
     let onCancel: () -> Void
 
@@ -15,7 +17,7 @@ struct SetupView: View {
     @AppStorage("preset") private var preset: ResolutionPreset = .p1080
     @AppStorage("fps") private var fps = 30
     @AppStorage("codec") private var codec: VideoCodec = .h264
-    @AppStorage("videoMbps") private var videoMbps = 6.0
+    @AppStorage("quality") private var quality: Quality = .balanced
     @AppStorage("systemAudio") private var systemAudio = true
     @AppStorage("mic") private var mic = false
     @AppStorage("micDeviceID") private var micDeviceID = ""  // "" = system default input
@@ -31,22 +33,28 @@ struct SetupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Form {
-                if let error = catalog.loadError {
-                    Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            if let error = catalog.loadError {
+                Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).padding([.horizontal, .top])
+            }
+            HStack(alignment: .top, spacing: 0) {
+                Form {
+                    captureSection
+                    videoSection
                 }
-                captureSection
-                videoSection
-                audioSection
-                Section("Save to") {
-                    HStack {
-                        Text((outputDir as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button("Choose…", action: chooseFolder)
+                Form {
+                    audioSection
+                    Section("Save to") {
+                        HStack {
+                            Text((outputDir as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Button("Choose…", action: chooseFolder)
+                        }
                     }
                 }
             }
             .formStyle(.grouped)
+            // A grouped Form is a scroll view with no natural height; without this the window collapses to the button row.
+            .frame(minHeight: 300)
 
             HStack {
                 summary.font(.callout).foregroundStyle(.secondary)
@@ -57,8 +65,11 @@ struct SetupView: View {
             }
             .padding()
         }
-        .frame(width: 480)
+        .frame(minWidth: 760)
         .task { await reload() }
+        .onChange(of: "\(mode.rawValue)|\(displayID)|\(regionString)", initial: true) {
+            previewRegion(CGDirectDisplayID(displayID), mode == .region ? region : nil)
+        }
     }
 
     private var captureSection: some View {
@@ -85,10 +96,10 @@ struct SetupView: View {
 
             if mode == .region {
                 HStack {
-                    Text(region.map { "\(Int($0.width)) × \(Int($0.height)) pt at (\(Int($0.minX)), \(Int($0.minY)))" } ?? "No region selected")
+                    Text(region.map { "\(Int($0.width)) × \(Int($0.height)) pt" } ?? "No region selected")
                         .foregroundStyle(region == nil ? .secondary : .primary)
                     Spacer()
-                    Button("Select Region…") {
+                    Button(region == nil ? "Select Region…" : "Reselect…") {
                         selectRegion(CGDirectDisplayID(displayID)) { rect in
                             if let rect { regionString = NSStringFromRect(rect) }
                         }
@@ -107,16 +118,13 @@ struct SetupView: View {
             Picker("Frame rate", selection: $fps) {
                 ForEach([10, 15, 24, 30, 60], id: \.self) { Text("\($0) fps").tag($0) }
             }
-            .pickerStyle(.segmented)
             Picker("Codec", selection: $codec) {
                 ForEach(VideoCodec.allCases) { Text($0.label).tag($0) }
             }
-            .pickerStyle(.segmented)
-            HStack {
-                Text("Bitrate")
-                Slider(value: $videoMbps, in: 1...30, step: 0.5)
-                Text(String(format: "%.1f Mbps", videoMbps)).monospacedDigit().frame(width: 72, alignment: .trailing)
+            Picker("Quality", selection: $quality) {
+                ForEach(Quality.allCases) { Text($0.label).tag($0) }
             }
+            .help("Trades file size for sharpness. Balanced keeps text crisp; Small is fine for talking over slides.")
         }
     }
 
@@ -141,9 +149,10 @@ struct SetupView: View {
         switch target {
         case .success(let t):
             let out = Sizing.outputSize(native: t.nativeSize, preset: preset)
-            let mb = Sizing.megabytesPerMinute(videoMbps: videoMbps, audioTracks: (systemAudio ? 1 : 0) + (mic ? 1 : 0))
+            let mbps = Sizing.videoMbps(size: out, fps: fps, quality: quality)
+            let mb = Sizing.megabytesPerMinute(videoMbps: mbps, audioTracks: (systemAudio ? 1 : 0) + (mic ? 1 : 0))
             Text("\(out.description) · ≈ \(Int(mb.rounded())) MB/min")
-                .help("Captured at \(t.nativeSize.description) native pixels, scaled by the GPU before encoding.")
+                .help("Captured at \(t.nativeSize.description) native pixels, scaled by the GPU, encoded at \(String(format: "%.1f", mbps)) Mbps.")
         case .failure(let error):
             Text(error.localizedDescription)
         }
@@ -178,12 +187,13 @@ struct SetupView: View {
     private func record() {
         let t: CaptureTarget
         do { t = try target.get() } catch { return showAlert(error.localizedDescription) }
+        let output = Sizing.outputSize(native: t.nativeSize, preset: preset)
         let options = RecordingOptions(
-            output: Sizing.outputSize(native: t.nativeSize, preset: preset),
+            output: output,
             sourceRect: t.sourceRect,
             fps: fps,
             codec: codec,
-            videoMbps: videoMbps,
+            videoMbps: Sizing.videoMbps(size: output, fps: fps, quality: quality),
             systemAudio: systemAudio,
             mic: mic,
             micDeviceID: micDeviceID.isEmpty ? nil : micDeviceID,

@@ -4,11 +4,12 @@ import SwiftUI
 import RecorderCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private let catalog = SourceCatalog()
     private let regionSelector = RegionSelector()
     private var setupWindow: NSWindow?
+    private var regionPreview: (display: CGDirectDisplayID, rect: CGRect)?
     private var recording: Recording?
     private var stopping = false
     private var startedAt = Date()
@@ -81,13 +82,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let view = SetupView(
                 catalog: catalog,
                 selectRegion: { [weak self] id, done in self?.selectRegion(on: id, done) },
+                previewRegion: { [weak self] id, rect in self?.setRegionPreview(rect.map { (id, $0) }) },
                 onRecord: { [weak self] target, options, dir in Task { await self?.start(target: target, options: options, dir: dir) } },
-                onCancel: { [weak self] in self?.setupWindow?.close() }
+                onCancel: { [weak self] in self?.hideSetup() }
             )
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "New Recording"
-            window.styleMask = [.titled, .closable]
+            window.styleMask = [.titled, .closable, .resizable]
+            window.level = .floating  // stays above the region preview overlay
+            window.setContentSize(NSSize(width: 820, height: 490))
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             setupWindow = window
         } else {
@@ -95,10 +100,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         NSApp.activate()
         setupWindow!.makeKeyAndOrderFront(nil)
+        if let regionPreview { regionSelector.preview(regionPreview.rect, on: regionPreview.display) }
+    }
+
+    private func setRegionPreview(_ preview: (display: CGDirectDisplayID, rect: CGRect)?) {
+        regionPreview = preview
+        guard setupWindow?.isVisible == true else { return }
+        regionSelector.preview(preview?.rect, on: preview?.display ?? 0)
+    }
+
+    private func hideSetup() {
+        setupWindow?.orderOut(nil)
+        regionSelector.preview(nil, on: 0)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        regionSelector.preview(nil, on: 0)
     }
 
     private func selectRegion(on displayID: CGDirectDisplayID, _ done: @escaping (CGRect?) -> Void) {
-        setupWindow?.orderOut(nil)
+        hideSetup()
         regionSelector.select(on: displayID) { [weak self] rect in
             done(rect)
             self?.showSetup()
@@ -121,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rec.onUnexpectedStop = { [weak self] error in
                 Task { @MainActor in await self?.stop(reason: error) }
             }
-            setupWindow?.orderOut(nil)
+            hideSetup()
             try await rec.start()
             recording = rec
             startedAt = Date()

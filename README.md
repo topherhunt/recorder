@@ -1,10 +1,10 @@
 # Recorder
 
-A small macOS 15+ menu bar screen recorder. Pick a screen, window, or region, then set the resolution, frame rate, codec, bitrate, computer audio, and mic. Click Record. While it records, the menu bar shows elapsed time and the file's current size. Click the red icon to stop, and the file is revealed in Finder.
+A small macOS 15+ menu bar screen recorder. Pick a screen, window, or region, then set the resolution, frame rate, codec, quality, computer audio, and mic. Click Record. A chosen region stays outlined on screen while the setup window is open. While it records, the menu bar shows elapsed time and the file's current size. Click the red icon to stop, and the file is revealed in Finder.
 
 ## How it works
 
-ScreenCaptureKit delivers frames already scaled to the output size on the GPU. Each frame goes directly to the hardware H.264/HEVC encoder through AVAssetWriter, so only compressed video reaches disk and the bitrate setting caps file size. Output is a fragmented `.mov` (fragments every 5 s), so a crash loses only the last few seconds. Computer audio and the mic are recorded as separate AAC tracks.
+ScreenCaptureKit delivers frames already scaled to the output size on the GPU. Each frame goes directly to the hardware H.264/HEVC encoder through AVAssetWriter, so only compressed video reaches disk. Quality sets bits per pixel (`Quality` in `Sizing.swift`), so the bitrate, and with it the file size, scales with resolution and frame rate. Output is a fragmented `.mov` (fragments every 5 s), so a crash loses only the last few seconds. Computer audio and the mic are recorded as separate AAC tracks.
 
 ## Build and run
 

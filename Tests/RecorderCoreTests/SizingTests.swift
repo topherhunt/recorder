@@ -26,6 +26,13 @@ import Testing
     #expect(out == PixelSize(width: 1280, height: 360))
 }
 
+@Test func qualityBitrateScalesWithPixelsAndFps() {
+    let p1080 = PixelSize(width: 1920, height: 1080)
+    #expect(abs(Sizing.videoMbps(size: p1080, fps: 30, quality: .balanced) - 6.2208) < 0.0001)
+    #expect(Sizing.videoMbps(size: p1080, fps: 60, quality: .high) == 4 * Sizing.videoMbps(size: p1080, fps: 30, quality: .balanced))
+    #expect(Sizing.videoMbps(size: PixelSize(width: 320, height: 240), fps: 10, quality: .small) == 0.5)  // floor
+}
+
 @Test func sizeEstimateIncludesAudioTracks() {
     #expect(Sizing.megabytesPerMinute(videoMbps: 8, audioTracks: 0) == 60)
     #expect(abs(Sizing.megabytesPerMinute(videoMbps: 8, audioTracks: 2) - 61.92) < 0.001)

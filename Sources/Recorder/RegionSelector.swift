@@ -1,34 +1,59 @@
 import AppKit
 
-/// Full-screen overlay on one display: drag a rectangle, Esc cancels. The result
-/// is in display-local points with a top-left origin (ScreenCaptureKit's sourceRect space).
+/// Full-screen overlays on one display. Rects are in display-local points with a
+/// top-left origin (ScreenCaptureKit's sourceRect space).
+/// - `select`: drag a rectangle, Esc cancels.
+/// - `preview`: click-through outline of a chosen region, kept just above normal
+///   windows so the (floating) setup window stays on top of it.
 @MainActor
 final class RegionSelector {
-    private var window: NSWindow?
+    private var selectWindow: NSWindow?
+    private var previewWindow: NSWindow?
 
     func select(on displayID: CGDirectDisplayID, completion: @escaping (CGRect?) -> Void) {
-        guard let screen = NSScreen.screens.first(where: {
-            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
-        }) else {
+        guard let screen = screen(for: displayID) else {
             showAlert("That screen is no longer connected.")
             return completion(nil)
         }
-        let window = KeyableWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.level = .screenSaver
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.isReleasedWhenClosed = false
-        let view = SelectionView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        let view = SelectionView(frame: NSRect(origin: .zero, size: screen.frame.size), region: nil)
         view.onDone = { [weak self] rect in
-            self?.window?.orderOut(nil)
-            self?.window = nil
+            self?.selectWindow?.orderOut(nil)
+            self?.selectWindow = nil
             completion(rect)
         }
-        window.contentView = view
-        self.window = window
+        let window = overlay(on: screen, view: view, level: .screenSaver)
+        selectWindow = window
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
+    }
+
+    /// Pass nil to hide.
+    func preview(_ region: CGRect?, on displayID: CGDirectDisplayID) {
+        previewWindow?.orderOut(nil)
+        previewWindow = nil
+        guard let region, let screen = screen(for: displayID) else { return }
+        let view = SelectionView(frame: NSRect(origin: .zero, size: screen.frame.size), region: region)
+        let window = overlay(on: screen, view: view, level: NSWindow.Level(NSWindow.Level.normal.rawValue + 1))
+        window.ignoresMouseEvents = true
+        window.orderFront(nil)
+        previewWindow = window
+    }
+
+    private func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
+        NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }
+    }
+
+    private func overlay(on screen: NSScreen, view: NSView, level: NSWindow.Level) -> NSWindow {
+        let window = KeyableWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.level = level
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        return window
     }
 }
 
@@ -39,7 +64,14 @@ private final class KeyableWindow: NSWindow {
 private final class SelectionView: NSView {
     var onDone: ((CGRect?) -> Void)?
     private var anchor: NSPoint?
-    private var selection: NSRect?
+    private var selection: NSRect?  // view coordinates (bottom-left origin)
+
+    init(frame: NSRect, region: CGRect?) {
+        super.init(frame: frame)
+        selection = region.map { NSRect(x: $0.minX, y: frame.height - $0.maxY, width: $0.width, height: $0.height) }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
 
     override var acceptsFirstResponder: Bool { true }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }

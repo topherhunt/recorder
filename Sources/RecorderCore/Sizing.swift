@@ -39,7 +39,28 @@ public enum ResolutionPreset: String, CaseIterable, Identifiable {
     }
 }
 
+/// Bits per pixel per frame, so the bitrate follows resolution and frame rate.
+/// Screen content compresses well; 0.1 bpp is crisp for text at 1080p30.
+public enum Quality: String, CaseIterable, Identifiable {
+    case small, balanced, high
+
+    public var id: String { rawValue }
+    public var label: String { rawValue.capitalized }
+
+    var bitsPerPixel: Double {
+        switch self {
+        case .small: 0.05
+        case .balanced: 0.1
+        case .high: 0.2
+        }
+    }
+}
+
 public enum Sizing {
+    public static func videoMbps(size: PixelSize, fps: Int, quality: Quality) -> Double {
+        max(0.5, Double(size.width * size.height * fps) * quality.bitsPerPixel / 1_000_000)
+    }
+
     /// Scales `native` to fit inside the preset's box (rotated to match a portrait
     /// source), preserving aspect ratio and never upscaling. Both dimensions come
     /// out even: the 4:2:0 encoders reject odd sizes.

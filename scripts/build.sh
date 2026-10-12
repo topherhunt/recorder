@@ -8,14 +8,13 @@
 #
 # Environment:
 #   REC_SIGN_IDENTITY  certificate common name, or "-" to force ad-hoc signing
-#   REC_VERSION        version string for Info.plist (default 0.0.0-dev)
 #   REC_APP_DIR        where to put the .app (default build)
 #   REC_UNIVERSAL=1    build arm64 + x86_64 instead of only this machine's arch
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP="${REC_APP_DIR:-build}/Recorder.app"
-VERSION="${REC_VERSION:-0.0.0-dev}"
+VERSION="$(tr -d '[:space:]' < VERSION)"
 CERT="${REC_SIGN_IDENTITY:-Activity Monitor Dev}"
 
 if [ "$CERT" = "-" ]; then

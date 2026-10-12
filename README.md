@@ -64,6 +64,8 @@ The smoke test runs under your terminal's Screen Recording permission.
 
 ### Releasing
 
-    bash scripts/release.sh 0.2.0
+The version lives in the `VERSION` file, so the repo always records what was last released. To release, bump `VERSION` (e.g. `0.2.0`), commit, push, then run:
 
-This publishes the current `main` commit as GitHub release `v0.2.0` with a `Recorder-0.2.0.zip` attached. It stops with an error if you're not on `main`, if there are uncommitted changes, or if `main` doesn't match `origin/main` (push first). It then runs the tests, builds a universal (Apple Silicon + Intel) ad-hoc-signed app into `dist/`, zips it, shows a summary, and asks for confirmation. Only then does it create the tag and release on GitHub. Release notes are generated from the commits since the previous release. It never commits or pushes for you. Needs the [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login`).
+    bash scripts/release.sh
+
+This publishes the current `main` commit as GitHub release `v0.2.0` with a `Recorder-0.2.0.zip` attached. It stops with an error if you're not on `main`, if there are uncommitted changes, if `main` doesn't match `origin/main` (push first), or if that version is already released (bump `VERSION`). It then runs the tests, builds a universal (Apple Silicon + Intel) ad-hoc-signed app into `dist/`, zips it, shows a summary, and asks for confirmation. Only then does it create the tag and release on GitHub. Release notes are generated from the commits since the previous release. It never commits or pushes for you. Needs the [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login`).

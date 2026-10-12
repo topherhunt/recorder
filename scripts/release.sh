@@ -1,18 +1,20 @@
 #!/bin/bash
-# Publishes a GitHub release of the current main commit. Run with:
-#   bash scripts/release.sh 0.2.0
+# Publishes the current main commit as a GitHub release. Run with:
+#   bash scripts/release.sh
 #
-# Refuses unless you're on main with a clean tree that matches origin/main. It
-# never commits or pushes: gh creates the tag on GitHub at that exact commit.
-# Everything is built, tested and zipped before you're asked to confirm.
+# The version comes from the VERSION file, so bump and commit it first. Refuses
+# unless you're on main with a clean tree that matches origin/main and VERSION
+# isn't already released. It never commits or pushes: gh creates the tag on
+# GitHub at that exact commit. Everything is built, tested and zipped before
+# you're asked to confirm.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 die() { echo "!! $*" >&2; exit 1; }
 
-VERSION="${1:-}"
-[ -n "$VERSION" ] || die "usage: bash scripts/release.sh <version>    e.g. 0.2.0"
-echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "version must look like 1.2.3, with no leading v"
+[ $# -eq 0 ] || die "takes no arguments; the version comes from the VERSION file"
+VERSION="$(tr -d '[:space:]' < VERSION)"
+echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "VERSION is '$VERSION'; it must look like 1.2.3, with no leading v"
 TAG="v$VERSION"
 ZIP="dist/Recorder-$VERSION.zip"
 
@@ -25,7 +27,8 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 git fetch --quiet origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
   || die "main and origin/main differ; push (or pull) first"
-[ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ] || die "tag $TAG already exists on GitHub"
+[ -z "$(git ls-remote --tags origin "refs/tags/$TAG")" ] \
+  || die "$TAG is already released; bump VERSION, commit, and push"
 COMMIT="$(git rev-parse HEAD)"
 
 echo "==> testing"
@@ -34,7 +37,7 @@ swift test
 # Ad-hoc signed: the local dev certificate means nothing on anyone else's Mac.
 # Into dist/ so this never replaces the build/ copy you're running.
 echo "==> building"
-REC_VERSION="$VERSION" REC_UNIVERSAL=1 REC_SIGN_IDENTITY="-" REC_APP_DIR=dist bash scripts/build.sh
+REC_UNIVERSAL=1 REC_SIGN_IDENTITY="-" REC_APP_DIR=dist bash scripts/build.sh
 
 echo "==> packaging $ZIP"
 rm -f "$ZIP"

@@ -48,8 +48,9 @@ fi
 
 echo "==> assembling $APP (version $VERSION)"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Recorder"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"  # regenerate with: swift scripts/make-icon.swift
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -58,6 +59,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key>              <string>Recorder</string>
   <key>CFBundleExecutable</key>        <string>Recorder</string>
+  <key>CFBundleIconFile</key>          <string>AppIcon</string>
   <key>CFBundleIdentifier</key>        <string>com.topherhunt.recorder</string>
   <key>CFBundlePackageType</key>       <string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>

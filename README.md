@@ -7,9 +7,10 @@ A small, native macOS menu bar screen recorder. It has more control than Kap and
 ## Features
 
 - **Record a screen, a single window, or a region you drag out.** A chosen region stays outlined on screen while you configure, so you can see exactly what will be captured.
+- **Audio only.** Skip the screen entirely and save computer audio and/or mic as an `.m4a`, about 1 MB per minute.
 - **Resolution is set before recording**, not by re-encoding afterward. The GPU scales frames down (never up) to 4K, 1440p, 1080p, 720p, or 480p, or keeps native Retina pixels.
 - **Frame rate** from 10 to 60 fps, **H.264 or HEVC**, and a **Quality** setting (Small / Balanced / High). The window shows the resulting size per minute before you start.
-- **Computer audio and microphone**, each on or off, with a choice of mic. With both on, they're saved as two separate audio tracks.
+- **Computer audio and microphone**, each on or off, with a choice of mic. With both on, video recordings keep them as two separate audio tracks; audio-only recordings mix them into one.
 - **Small files, written as you go.** Frames go straight to the hardware encoder, so only compressed video reaches disk. The menu bar shows elapsed time and the file's current size while recording.
 - **Crash-tolerant.** Recordings are fragmented `.mov` files, so a crash loses only the last few seconds.
 - Settings are remembered between recordings.
@@ -35,16 +36,16 @@ Every so often macOS asks whether Recorder may keep capturing "without the syste
 ## Using it
 
 1. Click the ⏺ menu bar icon › **New Recording…** (the window also opens at launch).
-2. Choose **Screen**, **Window**, or **Region**. For a region, click **Select Region…** and drag; Esc cancels.
+2. Choose **Screen**, **Window**, **Region**, or **Audio only**. For a region, click **Select Region…** and drag; Esc cancels.
 3. Pick resolution, frame rate, codec, quality, and audio, and where to save (default `~/Movies`).
 4. Click **Record**. The window closes and the menu bar icon turns into a red ⏹ with a running time and file size.
-5. Click the red icon to stop. The file is saved as `Recording <date> at <time>.mov` and shown in Finder.
+5. Click the red icon to stop. The file is saved as `Recording <date> at <time>.mov` (`.m4a` for audio only) and shown in Finder.
 
 Quality guide: **Balanced** keeps text crisp and is right for most screen recordings. **Small** suits talking over slides. **High** is for fast motion or fine detail. HEVC makes smaller files at the same quality, while H.264 plays everywhere.
 
 ## How it works
 
-ScreenCaptureKit delivers frames already scaled to the output size on the GPU. Each frame goes directly to the hardware H.264/HEVC encoder through AVAssetWriter, so nothing uncompressed is written. Quality sets bits per pixel (`Quality` in `Sources/RecorderCore/Sizing.swift`), so the bitrate, and with it the file size, scales with resolution and frame rate. Output is a `.mov` written in 5-second fragments. Computer audio and mic are separate AAC tracks.
+ScreenCaptureKit delivers frames already scaled to the output size on the GPU. Each frame goes directly to the hardware H.264/HEVC encoder through AVAssetWriter, so nothing uncompressed is written. Quality sets bits per pixel (`Quality` in `Sources/RecorderCore/Sizing.swift`), so the bitrate, and with it the file size, scales with resolution and frame rate. Output is a `.mov` written in 5-second fragments. Computer audio and mic are separate AAC tracks. Audio-only mode still runs a ScreenCaptureKit stream (that's how macOS exposes computer audio), so it needs the Screen Recording permission too. It discards the frames and writes a fragmented `.m4a`. If both sources are on, the two tracks are mixed into one when you stop, because most players and transcription tools only play an audio file's first track.
 
 ## Development
 
@@ -59,6 +60,7 @@ Local builds are signed with a stable self-signed certificate so macOS keeps the
 
     swift test                                                            # sizing, quality and naming unit tests
     build/Recorder.app/Contents/MacOS/Recorder --smoke-test 4 /tmp/s.mov  # real 4 s capture of the main display, then checks size/duration/tracks/bytes
+    build/Recorder.app/Contents/MacOS/Recorder --smoke-test 4 /tmp/s.m4a  # same, audio only (computer audio, no video track)
 
 The smoke test runs under your terminal's Screen Recording permission.
 

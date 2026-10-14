@@ -28,7 +28,10 @@ struct SetupView: View {
     private var region: CGRect? { regionString.isEmpty ? nil : NSRectFromString(regionString) }
 
     private var target: Result<CaptureTarget, Error> {
-        Result { try catalog.target(mode: mode, displayID: CGDirectDisplayID(displayID), windowID: CGWindowID(windowID), region: region) }
+        Result {
+            if mode == .audio && !systemAudio && !mic { throw RecorderError("Turn on computer audio or the microphone.") }
+            return try catalog.target(mode: mode, displayID: CGDirectDisplayID(displayID), windowID: CGWindowID(windowID), region: region)
+        }
     }
 
     var body: some View {
@@ -79,7 +82,8 @@ struct SetupView: View {
             }
             .pickerStyle(.segmented)
 
-            if mode == .window {
+            switch mode {
+            case .window:
                 HStack {
                     Picker("Window", selection: $windowID) {
                         ForEach(catalog.windows, id: \.windowID) { Text($0.menuLabel).tag(Int($0.windowID)) }
@@ -87,11 +91,13 @@ struct SetupView: View {
                     Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }
                         .help("Refresh the window list")
                 }
-            } else {
+            case .display, .region:
                 Picker("Screen", selection: $displayID) {
                     ForEach(catalog.displays, id: \.displayID) { Text(displayName($0)).tag(Int($0.displayID)) }
                 }
                 .onChange(of: displayID) { regionString = "" }
+            case .audio:
+                Text("Records sound only, to an .m4a file.").foregroundStyle(.secondary)
             }
 
             if mode == .region {
@@ -106,7 +112,9 @@ struct SetupView: View {
                     }
                 }
             }
-            Toggle("Show mouse cursor", isOn: $showsCursor)
+            if mode != .audio {
+                Toggle("Show mouse cursor", isOn: $showsCursor)
+            }
         }
     }
 
@@ -126,6 +134,7 @@ struct SetupView: View {
             }
             .help("Trades file size for sharpness. Balanced keeps text crisp; Small is fine for talking over slides.")
         }
+        .disabled(mode == .audio)
     }
 
     private var audioSection: some View {
@@ -139,7 +148,7 @@ struct SetupView: View {
                 }
             }
             if systemAudio && mic {
-                Text("Computer audio and mic are saved as two separate audio tracks.")
+                Text(mode == .audio ? "Computer audio and mic are mixed into one track." : "Computer audio and mic are saved as two separate audio tracks.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -147,6 +156,8 @@ struct SetupView: View {
 
     @ViewBuilder private var summary: some View {
         switch target {
+        case .success where mode == .audio:
+            Text("Audio only · ≈ \(Int(Sizing.megabytesPerMinute(videoMbps: 0, audioTracks: 1).rounded())) MB/min")
         case .success(let t):
             let out = Sizing.outputSize(native: t.nativeSize, preset: preset)
             let mbps = Sizing.videoMbps(size: out, fps: fps, quality: quality)
@@ -189,15 +200,17 @@ struct SetupView: View {
         do { t = try target.get() } catch { return showAlert(error.localizedDescription) }
         let output = Sizing.outputSize(native: t.nativeSize, preset: preset)
         let options = RecordingOptions(
-            output: output,
-            sourceRect: t.sourceRect,
-            fps: fps,
-            codec: codec,
-            videoMbps: Sizing.videoMbps(size: output, fps: fps, quality: quality),
+            video: mode == .audio ? nil : VideoOptions(
+                output: output,
+                sourceRect: t.sourceRect,
+                fps: fps,
+                codec: codec,
+                mbps: Sizing.videoMbps(size: output, fps: fps, quality: quality),
+                showsCursor: showsCursor
+            ),
             systemAudio: systemAudio,
             mic: mic,
-            micDeviceID: micDeviceID.isEmpty ? nil : micDeviceID,
-            showsCursor: showsCursor
+            micDeviceID: micDeviceID.isEmpty ? nil : micDeviceID
         )
         onRecord(t, options, URL(fileURLWithPath: outputDir, isDirectory: true))
     }

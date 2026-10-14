@@ -3,13 +3,14 @@ import ScreenCaptureKit
 import RecorderCore
 
 enum CaptureMode: String, CaseIterable, Identifiable {
-    case display, window, region
+    case display, window, region, audio
     var id: String { rawValue }
     var label: String {
         switch self {
         case .display: "Screen"
         case .window: "Window"
         case .region: "Region"
+        case .audio: "Audio only"
         }
     }
 }
@@ -47,13 +48,14 @@ final class SourceCatalog: ObservableObject {
     }
 
     /// `region` is in display-local points with a top-left origin, as ScreenCaptureKit's sourceRect expects.
+    /// `.audio` still needs a display filter: ScreenCaptureKit captures audio only as part of a stream.
     func target(mode: CaptureMode, displayID: CGDirectDisplayID, windowID: CGWindowID, region: CGRect?) throws -> CaptureTarget {
         switch mode {
-        case .display, .region:
+        case .display, .region, .audio:
             guard let display = displays.first(where: { $0.displayID == displayID }) else { throw RecorderError("Pick a screen.") }
             let filter = SCContentFilter(display: display, excludingApplications: ownApp.map { [$0] } ?? [], exceptingWindows: [])
             let scale = CGFloat(filter.pointPixelScale)
-            if mode == .display {
+            if mode != .region {
                 return CaptureTarget(filter: filter, sourceRect: nil, nativeSize: pixels(filter.contentRect.size, scale))
             }
             guard let region, region.width >= 2, region.height >= 2 else { throw RecorderError("Select a region first.") }

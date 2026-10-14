@@ -135,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return showAlert("Microphone access is off.", info: "Turn it on in System Settings › Privacy & Security › Microphone, or untick “Record microphone”.")
             }
         }
-        let url = dir.appendingPathComponent(FileNaming.recordingName(at: Date()))
+        let url = dir.appendingPathComponent(FileNaming.recordingName(at: Date(), ext: options.fileExtension))
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let rec = try Recording(filter: target.filter, options: options, url: url)

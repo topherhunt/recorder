@@ -9,16 +9,23 @@ enum VideoCodec: String, CaseIterable, Identifiable {
     var avType: AVVideoCodecType { self == .h264 ? .h264 : .hevc }
 }
 
-struct RecordingOptions {
+struct VideoOptions {
     var output: PixelSize
     var sourceRect: CGRect?
     var fps: Int
     var codec: VideoCodec
-    var videoMbps: Double
+    var mbps: Double
+    var showsCursor: Bool
+}
+
+struct RecordingOptions {
+    /// nil records audio only, to an .m4a.
+    var video: VideoOptions?
     var systemAudio: Bool
     var mic: Bool
     var micDeviceID: String?
-    var showsCursor: Bool
+
+    var fileExtension: String { video == nil ? "m4a" : "mov" }
 }
 
 struct RecorderError: LocalizedError {
@@ -37,7 +44,7 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
 
     private let stream: SCStream
     private let writer: AVAssetWriter
-    private let videoInput: AVAssetWriterInput
+    private let videoInput: AVAssetWriterInput?
     private let systemInput: AVAssetWriterInput?
     private let micInput: AVAssetWriterInput?
     private let queue = DispatchQueue(label: "recorder.samples", qos: .userInitiated)
@@ -53,14 +60,21 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
         self.options = options
 
         let config = SCStreamConfiguration()
-        config.width = options.output.width
-        config.height = options.output.height
-        if let rect = options.sourceRect { config.sourceRect = rect }
-        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(options.fps))
+        if let video = options.video {
+            config.width = video.output.width
+            config.height = video.output.height
+            if let rect = video.sourceRect { config.sourceRect = rect }
+            config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(video.fps))
+            config.showsCursor = video.showsCursor
+        } else {
+            // SCStream always captures frames; audio-only discards them, so keep them tiny and rare.
+            config.width = 2
+            config.height = 2
+            config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        }
         config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         config.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         config.preservesAspectRatio = true
-        config.showsCursor = options.showsCursor
         config.queueDepth = 6
         config.capturesAudio = options.systemAudio
         config.excludesCurrentProcessAudio = true
@@ -69,22 +83,24 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
         config.captureMicrophone = options.mic
         if let id = options.micDeviceID { config.microphoneCaptureDeviceID = id }
 
-        writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        // Fragmented .mov: a crash loses at most the last few seconds instead of the whole file.
+        writer = try AVAssetWriter(outputURL: url, fileType: options.video == nil ? .m4a : .mov)
+        // Fragmented: a crash loses at most the last few seconds instead of the whole file.
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
 
-        videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: options.codec.avType,
-            AVVideoWidthKey: options.output.width,
-            AVVideoHeightKey: options.output.height,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: Int(options.videoMbps * 1_000_000),
-                AVVideoExpectedSourceFrameRateKey: options.fps,
-                AVVideoMaxKeyFrameIntervalKey: options.fps * 2,
-            ],
-        ])
-        videoInput.expectsMediaDataInRealTime = true
-        writer.add(videoInput)
+        videoInput = options.video.map { video in
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+                AVVideoCodecKey: video.codec.avType,
+                AVVideoWidthKey: video.output.width,
+                AVVideoHeightKey: video.output.height,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoAverageBitRateKey: Int(video.mbps * 1_000_000),
+                    AVVideoExpectedSourceFrameRateKey: video.fps,
+                    AVVideoMaxKeyFrameIntervalKey: video.fps * 2,
+                ],
+            ])
+            input.expectsMediaDataInRealTime = true
+            return input
+        }
 
         func audioInput() -> AVAssetWriterInput {
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
@@ -98,7 +114,7 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
         }
         systemInput = options.systemAudio ? audioInput() : nil
         micInput = options.mic ? audioInput() : nil
-        for input in [systemInput, micInput].compactMap({ $0 }) { writer.add(input) }
+        for input in [videoInput, systemInput, micInput].compactMap({ $0 }) { writer.add(input) }
 
         stream = SCStream(filter: filter, configuration: config, delegate: stopForwarder)
         super.init()
@@ -120,6 +136,22 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
             NSLog("stopCapture: \(error)")
         }
         try await finalize()
+        if options.video == nil, options.systemAudio, options.mic { try await mixDown() }
+    }
+
+    /// Merges the computer audio and mic tracks into one: most players and transcription tools play only an audio file's first track.
+    private func mixDown() async throws {
+        let mixed = url.deletingPathExtension().appendingPathExtension("mixing.m4a")
+        do {
+            guard let export = AVAssetExportSession(asset: AVURLAsset(url: url), presetName: AVAssetExportPresetAppleM4A) else {
+                throw RecorderError("The M4A export preset is unavailable.")
+            }
+            try await export.export(to: mixed, as: .m4a)
+            _ = try FileManager.default.replaceItemAt(url, withItemAt: mixed)
+        } catch {
+            try? FileManager.default.removeItem(at: mixed)
+            throw RecorderError("Mixing the computer audio and mic failed, so the file keeps them as two separate tracks. (\(error.localizedDescription))")
+        }
     }
 
     private func finalize() async throws {
@@ -134,7 +166,7 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
                 guard sessionStart != nil else {
                     writer.cancelWriting()
                     try? FileManager.default.removeItem(at: url)
-                    return cont.resume(throwing: RecorderError("No video frames arrived, so nothing was recorded."))
+                    return cont.resume(throwing: RecorderError("No \(videoInput == nil ? "audio" : "video frames") arrived, so nothing was recorded."))
                 }
                 for input in [videoInput, systemInput, micInput].compactMap({ $0 }) { input.markAsFinished() }
                 // Ending at the stop time (not the last frame) keeps a static final screen in the video.
@@ -156,16 +188,18 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
         case .screen:
             // ScreenCaptureKit also emits idle/blank status buffers with no image; only complete frames are video.
             guard let info = (CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first,
-                  let raw = info[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
-            if sessionStart == nil {
-                sessionStart = sample.presentationTimeStamp
-                writer.startSession(atSourceTime: sample.presentationTimeStamp)
-            }
+                  let raw = info[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete,
+                  let videoInput else { return }
+            startSessionIfNeeded(at: sample)
             append(sample, to: videoInput, countDrops: true)
         case .audio:
-            if let systemInput { append(sample, to: systemInput, countDrops: false) }
+            guard let systemInput else { return }
+            if videoInput == nil { startSessionIfNeeded(at: sample) }
+            append(sample, to: systemInput, countDrops: false)
         case .microphone:
-            if let micInput { append(sample, to: micInput, countDrops: false) }
+            guard let micInput else { return }
+            if videoInput == nil { startSessionIfNeeded(at: sample) }
+            append(sample, to: micInput, countDrops: false)
         @unknown default:
             return
         }
@@ -173,6 +207,13 @@ final class Recording: NSObject, SCStreamOutput, @unchecked Sendable {
             finished = true
             onUnexpectedStop?(writer.error ?? RecorderError("The video writer failed."))
         }
+    }
+
+    /// The first video frame (or, for audio only, the first audio sample) sets time zero; anything earlier is dropped.
+    private func startSessionIfNeeded(at sample: CMSampleBuffer) {
+        guard sessionStart == nil else { return }
+        sessionStart = sample.presentationTimeStamp
+        writer.startSession(atSourceTime: sample.presentationTimeStamp)
     }
 
     private func append(_ sample: CMSampleBuffer, to input: AVAssetWriterInput, countDrops: Bool) {
